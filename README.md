@@ -5,6 +5,23 @@ Scripts and SOP for ZFS backups using znapzend on GhostBSD
 **Anonymous-Cupholder**  
 *Copyright 2024*
 
+## Table of Contents
+1. [Introduction](#introduction)
+2. [Prerequisites](#prerequisites)
+3. [Installation of `znapzend`](#installation-of-znapzend)
+4. [Configuration of `znapzend`](#configuration-of-znapzend)
+   - [Set Up SSH Keys](#set-up-ssh-keys)
+   - [Create a Snapshot Schedule](#create-a-snapshot-schedule)
+   - [Start and Enable `znapzend`](#start-and-enable-znapzend)
+5. [Scripts](#scripts)
+   - [`setup_znapzend.sh`](#1-setup_znapzendsh)
+   - [`backup_now.sh`](#2-backup_nowsh)
+   - [`restore_snapshot.sh`](#3-restore_snapshotsh)
+   - [`validate_backups.sh`](#4-validate_backupssh)
+   - [`schedule_validation.sh`](#5-schedule_validationsh)
+6. [Usage Instructions](#usage-instructions)
+7. [Best Practices](#best-practices)
+
 ## Introduction
 This SOP outlines the steps to configure, use, validate, and restore ZFS backups using `znapzend` on GhostBSD, storing backups to a remote location.
 
@@ -14,6 +31,10 @@ This SOP outlines the steps to configure, use, validate, and restore ZFS backups
 - Sufficient disk space on both source and remote backup pools.
 - SSH keys set up for passwordless access to the remote server.
 - Remote server with ZFS configured for receiving backups.
+- Ensure all dependencies are installed:
+    ```
+    pkg install zfs znapzend rsync
+    ```
 
 ## Installation of `znapzend`
 
@@ -257,5 +278,3 @@ echo "Scheduled validation script to run every Sunday at 2 AM."
 ---
 
 This SOP provides a comprehensive guide to setting up, using, validating, and restoring backups with `znapzend` on GhostBSD, storing backups to a remote location. Regular testing and monitoring are key to ensuring data integrity and availability.
-
-
