@@ -24,17 +24,23 @@ This SOP outlines the steps to configure, use, validate, and restore ZFS backups
 
 ## Configuration of `znapzend`
 
-1. **Set Up SSH Keys**:
-    - Generate an SSH key pair if you don't already have one:
-        ```
-        ssh-keygen -t rsa -b 4096 -C "your_email@example.com"
-        ```
-    - Copy the public key to the remote server:
-        ```
-        ssh-copy-id user@backupserver
-        ```
+### Set Up SSH Keys
+Generate SSH keys and copy them to the remote server for passwordless login.
 
-2. **Create a Snapshot Schedule**:
+1. **Generate SSH keys**:
+    ```
+    ssh-keygen -t rsa -b 4096 -C "${USER}@${HOSTNAME}" -f ~/.ssh/id_rsa -N ""
+    ```
+
+2. **Copy the public key to the remote server**:
+    ```
+    ssh-copy-id user@backupserver
+    ```
+
+### Create a Snapshot Schedule
+Create a snapshot schedule to define backup frequency and retention.
+
+1. **Create a Snapshot Schedule**:
     Replace `pool/dataset` with your actual pool and dataset names, and `backup_pool/dataset` with your backup pool and dataset names on the remote server.
     ```
     znapzendzetup create --recursive --tsformat='%Y-%m-%d-%H%M%S' \
@@ -48,12 +54,12 @@ This SOP outlines the steps to configure, use, validate, and restore ZFS backups
     - Keeps monthly snapshots for 6 months.
     - Backs up from `pool/dataset` to `backup_pool/dataset` on the remote server.
 
-3. **Verify Configuration**:
+2. **Verify Configuration**:
     ```
     znapzendzetup list
     ```
 
-## Running `znapzend`
+### Start and Enable `znapzend`
 
 1. **Start `znapzend`**:
     ```
@@ -65,133 +71,180 @@ This SOP outlines the steps to configure, use, validate, and restore ZFS backups
     sysrc znapzend_enable="YES"
     ```
 
-## Manual Backup Execution (Optional)
+## Scripts
 
-1. **Run Manual Backup**:
+### 1. `setup_znapzend.sh`
+This script sets up `znapzend`, configures SSH keys, and creates a snapshot schedule.
+
+```
+#!/bin/sh
+
+# Variables
+LOCAL_POOL="pool"
+LOCAL_DATASET="dataset"
+REMOTE_USER="user"
+REMOTE_SERVER="backupserver"
+REMOTE_POOL="backup_pool"
+REMOTE_DATASET="dataset"
+SNAPSHOT_SCHEDULE="1d=>7d,1w=>4w,1m=>6m"
+
+# Install znapzend
+pkg install -y znapzend
+
+# Generate SSH keys if not already present
+if [ ! -f ~/.ssh/id_rsa ]; then
+    ssh-keygen -t rsa -b 4096 -C "${USER}@${HOSTNAME}" -f ~/.ssh/id_rsa -N ""
+fi
+
+# Copy public key to remote server
+ssh-copy-id ${REMOTE_USER}@${REMOTE_SERVER}
+
+# Create znapzend schedule
+znapzendzetup create --recursive --tsformat='%Y-%m-%d-%H%M%S' \
+  SRC "${SNAPSHOT_SCHEDULE}" \
+  ${LOCAL_POOL}/${LOCAL_DATASET} \
+  DST "${REMOTE_USER}@${REMOTE_SERVER}:${REMOTE_POOL}/${REMOTE_DATASET}"
+
+# Verify configuration
+znapzendzetup list
+
+# Start znapzend service
+service znapzend start
+
+# Enable znapzend at boot
+sysrc znapzend_enable="YES"
+
+echo "znapzend setup and configuration completed successfully."
+```
+
+### 2. `backup_now.sh`
+This script triggers a manual backup using `znapzend`.
+
+```
+#!/bin/sh
+
+# Variables
+LOCAL_POOL="pool"
+LOCAL_DATASET="dataset"
+
+# Run manual backup
+znapzend --runonce ${LOCAL_POOL}/${LOCAL_DATASET}
+
+echo "Manual backup triggered successfully."
+```
+
+### 3. `restore_snapshot.sh`
+This script restores a specified snapshot from the remote server to a new location.
+
+```
+#!/bin/sh
+
+# Variables
+LOCAL_POOL="pool"
+RESTORE_DATASET="restore_dataset"
+REMOTE_USER="user"
+REMOTE_SERVER="backupserver"
+REMOTE_POOL="backup_pool"
+REMOTE_DATASET="dataset"
+SNAPSHOT_NAME="snapshot_name"
+
+# Create local restore dataset
+zfs create ${LOCAL_POOL}/${RESTORE_DATASET}
+
+# Receive the snapshot from remote server
+zfs receive ${LOCAL_POOL}/${RESTORE_DATASET} < <(ssh ${REMOTE_USER}@${REMOTE_SERVER} zfs send ${REMOTE_POOL}/${REMOTE_DATASET}@${SNAPSHOT_NAME})
+
+# Verify restored data
+zfs mount ${LOCAL_POOL}/${RESTORE_DATASET}
+ls /${LOCAL_POOL}/${RESTORE_DATASET}
+
+echo "Snapshot restored to ${LOCAL_POOL}/${RESTORE_DATASET} successfully."
+```
+
+### 4. `validate_backups.sh`
+This script validates the backups by running a scrub and comparing datasets using `rsync`.
+
+```
+#!/bin/sh
+
+# Variables
+SOURCE_POOL="pool"
+SOURCE_DATASET="dataset"
+BACKUP_POOL="backup_pool"
+BACKUP_DATASET="dataset"
+REMOTE_USER="user"
+REMOTE_SERVER="backupserver"
+
+# Run scrub on source and backup pools
+echo "Running scrub on source dataset..."
+zfs scrub ${SOURCE_POOL}/${SOURCE_DATASET}
+echo "Running scrub on backup dataset..."
+ssh ${REMOTE_USER}@${REMOTE_SERVER} zfs scrub ${BACKUP_POOL}/${BACKUP_DATASET}
+
+# Wait for scrub to complete
+echo "Waiting for scrub to complete..."
+sleep 60  # Adjust based on the size of your datasets
+
+# Check scrub status
+SOURCE_STATUS=$(zpool status ${SOURCE_POOL} | grep state)
+BACKUP_STATUS=$(ssh ${REMOTE_USER}@${REMOTE_SERVER} zpool status ${BACKUP_POOL} | grep state)
+
+echo "Source Pool Status: ${SOURCE_STATUS}"
+echo "Backup Pool Status: ${BACKUP_STATUS}"
+
+# List snapshots
+echo "Listing snapshots on source dataset..."
+zfs list -t snapshot -r ${SOURCE_POOL}/${SOURCE_DATASET}
+echo "Listing snapshots on backup dataset..."
+ssh ${REMOTE_USER}@${REMOTE_SERVER} zfs list -t snapshot -r ${BACKUP_POOL}/${BACKUP_DATASET}
+
+# Compare datasets using rsync
+echo "Comparing source and backup datasets using rsync..."
+rsync -avnc /${SOURCE_POOL}/${SOURCE_DATASET}/ ${REMOTE_USER}@${REMOTE_SERVER}:/${BACKUP_POOL}/${BACKUP_DATASET}/
+
+echo "Backup validation completed successfully."
+```
+
+### 5. `schedule_validation.sh`
+This script sets up a cron job to regularly perform validation.
+
+```
+#!/bin/sh
+
+# Path to validation script
+VALIDATION_SCRIPT_PATH="/path/to/validate_backups.sh"
+
+# Add cron job to run validation script every Sunday at 2 AM
+(crontab -l ; echo "0 2 * * 0 ${VALIDATION_SCRIPT_PATH}") | crontab -
+
+echo "Scheduled validation script to run every Sunday at 2 AM."
+```
+
+## Usage Instructions
+
+1. **Set up `znapzend` and SSH keys**:
     ```
-    znapzend --runonce pool/dataset
+    ./setup_znapzend.sh
     ```
 
-## Restoration of Data
-
-1. **List Available Snapshots**:
+2. **Trigger a manual backup**:
     ```
-    zfs list -t snapshot -r backup_pool/dataset
+    ./backup_now.sh
     ```
 
-2. **Restore Snapshot to New Location**:
+3. **Restore a snapshot**:
     ```
-    zfs create pool/restore_dataset
-    zfs receive pool/restore_dataset < <(ssh user@backupserver zfs send backup_pool/dataset@snapshot_name)
-    ```
-
-3. **Restore to Original Location** (this will overwrite existing data):
-    - **Rollback or Destroy Current Dataset**:
-        ```
-        zfs rollback -r pool/dataset@snapshot_name
-        # or
-        zfs destroy pool/dataset
-        ```
-    - **Receive the Snapshot**:
-        ```
-        zfs receive -F pool/dataset < <(ssh user@backupserver zfs send backup_pool/dataset@snapshot_name)
-        ```
-
-4. **Verify Restored Data**:
-    ```
-    zfs mount pool/restore_dataset
-    ls /pool/restore_dataset
+    ./restore_snapshot.sh
     ```
 
-## Validation of Backups
-
-1. **Checksum Verification**:
-    - **Run Scrub on Source Dataset**:
-        ```
-        zfs scrub pool/dataset
-        ```
-    - **Run Scrub on Backup Dataset** (on remote server):
-        ```
-        ssh user@backupserver zfs scrub backup_pool/dataset
-        ```
-    - **Check Scrub Status**:
-        ```
-        zpool status pool
-        ssh user@backupserver zpool status backup_pool
-        ```
-
-2. **Snapshot Comparison**:
-    - **List Snapshots on Source**:
-        ```
-        zfs list -t snapshot -r pool/dataset
-        ```
-    - **List Snapshots on Backup** (on remote server):
-        ```
-        ssh user@backupserver zfs list -t snapshot -r backup_pool/dataset
-        ```
-
-3. **Manual Data Validation**:
-    - **Mount the Backup Dataset** (if not already mounted):
-        ```
-        ssh user@backupserver zfs mount backup_pool/dataset
-        ```
-    - **Compare Data Using `diff` or `rsync`**:
-        - **Using `diff`**:
-            ```
-            diff -r /pool/dataset <(ssh user@backupserver cat /backup_pool/dataset)
-            ```
-        - **Using `rsync` with Dry Run**:
-            ```
-            rsync -avnc /pool/dataset/ user@backupserver:/backup_pool/dataset/
-            ```
-
-4. **Automated Validation Script**:
+4. **Validate backups**:
     ```
-    #!/bin/sh
-
-    SOURCE_POOL="pool"
-    SOURCE_DATASET="dataset"
-    BACKUP_POOL="backup_pool"
-    BACKUP_DATASET="dataset"
-    REMOTE_USER="user"
-    REMOTE_SERVER="backupserver"
-
-    # Run scrub on source and backup pools
-    echo "Running scrub on source dataset..."
-    zfs scrub ${SOURCE_POOL}/${SOURCE_DATASET}
-    echo "Running scrub on backup dataset..."
-    ssh ${REMOTE_USER}@${REMOTE_SERVER} zfs scrub ${BACKUP_POOL}/${BACKUP_DATASET}
-
-    # Wait for scrub to complete
-    echo "Waiting for scrub to complete..."
-    sleep 60  # Adjust based on the size of your datasets
-
-    # Check scrub status
-    SOURCE_STATUS=$(zpool status ${SOURCE_POOL} | grep state)
-    BACKUP_STATUS=$(ssh ${REMOTE_USER}@${REMOTE_SERVER} zpool status ${BACKUP_POOL} | grep state)
-
-    echo "Source Pool Status: ${SOURCE_STATUS}"
-    echo "Backup Pool Status: ${BACKUP_STATUS}"
-
-    # List snapshots
-    echo "Listing snapshots on source dataset..."
-    zfs list -t snapshot -r ${SOURCE_POOL}/${SOURCE_DATASET}
-    echo "Listing snapshots on backup dataset..."
-    ssh ${REMOTE_USER}@${REMOTE_SERVER} zfs list -t snapshot -r ${BACKUP_POOL}/${BACKUP_DATASET}
-
-    # Compare datasets using rsync
-    echo "Comparing source and backup datasets using rsync..."
-    rsync -avnc /${SOURCE_POOL}/${SOURCE_DATASET}/ ${REMOTE_USER}@${REMOTE_SERVER}:/${BACKUP_POOL}/${BACKUP_DATASET}/
+    ./validate_backups.sh
     ```
 
-5. **Regular Verification Schedule**:
-    Set up a cron job to regularly perform the validation.
+5. **Schedule regular validation**:
     ```
-    # Edit the cron table
-    crontab -e
-
-    # Add the following line to run the validation script every Sunday at 2 AM
-    0 2 * * 0 /path/to/validation_script.sh
+    ./schedule_validation.sh
     ```
 
 ## Best Practices
@@ -204,3 +257,5 @@ This SOP outlines the steps to configure, use, validate, and restore ZFS backups
 ---
 
 This SOP provides a comprehensive guide to setting up, using, validating, and restoring backups with `znapzend` on GhostBSD, storing backups to a remote location. Regular testing and monitoring are key to ensuring data integrity and availability.
+
+
