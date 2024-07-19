@@ -109,31 +109,46 @@ REMOTE_POOL="backup_pool"
 REMOTE_DATASET="dataset"
 SNAPSHOT_SCHEDULE="1d=>7d,1w=>4w,1m=>6m"
 
+# Function to check the exit status of the last executed command
+check_command() {
+    if [ $? -ne 0 ]; then
+        echo "Error: $1"
+        exit 1
+    fi
+}
+
 # Install znapzend
 pkg install -y znapzend
+check_command "Failed to install znapzend"
 
 # Generate SSH keys if not already present
 if [ ! -f ~/.ssh/id_rsa ]; then
     ssh-keygen -t rsa -b 4096 -C "${USER}@${HOSTNAME}" -f ~/.ssh/id_rsa -N ""
+    check_command "Failed to generate SSH keys"
 fi
 
 # Copy public key to remote server
 ssh-copy-id ${REMOTE_USER}@${REMOTE_SERVER}
+check_command "Failed to copy SSH key to remote server"
 
 # Create znapzend schedule
 znapzendzetup create --recursive --tsformat='%Y-%m-%d-%H%M%S' \
   SRC "${SNAPSHOT_SCHEDULE}" \
   ${LOCAL_POOL}/${LOCAL_DATASET} \
   DST "${REMOTE_USER}@${REMOTE_SERVER}:${REMOTE_POOL}/${REMOTE_DATASET}"
+check_command "Failed to create znapzend schedule"
 
 # Verify configuration
 znapzendzetup list
+check_command "Failed to verify znapzend configuration"
 
 # Start znapzend service
 service znapzend start
+check_command "Failed to start znapzend service"
 
 # Enable znapzend at boot
 sysrc znapzend_enable="YES"
+check_command "Failed to enable znapzend at boot"
 
 echo "znapzend setup and configuration completed successfully."
 ```
@@ -148,8 +163,17 @@ This script triggers a manual backup using `znapzend`.
 LOCAL_POOL="pool"
 LOCAL_DATASET="dataset"
 
+# Function to check the exit status of the last executed command
+check_command() {
+    if [ $? -ne 0 ]; then
+        echo "Error: $1"
+        exit 1
+    fi
+}
+
 # Run manual backup
 znapzend --runonce ${LOCAL_POOL}/${LOCAL_DATASET}
+check_command "Failed to trigger manual backup"
 
 echo "Manual backup triggered successfully."
 ```
@@ -169,14 +193,25 @@ REMOTE_POOL="backup_pool"
 REMOTE_DATASET="dataset"
 SNAPSHOT_NAME="snapshot_name"
 
+# Function to check the exit status of the last executed command
+check_command() {
+    if [ $? -ne 0 ]; then
+        echo "Error: $1"
+        exit 1
+    fi
+}
+
 # Create local restore dataset
 zfs create ${LOCAL_POOL}/${RESTORE_DATASET}
+check_command "Failed to create local restore dataset"
 
 # Receive the snapshot from remote server
 zfs receive ${LOCAL_POOL}/${RESTORE_DATASET} < <(ssh ${REMOTE_USER}@${REMOTE_SERVER} zfs send ${REMOTE_POOL}/${REMOTE_DATASET}@${SNAPSHOT_NAME})
+check_command "Failed to receive snapshot from remote server"
 
 # Verify restored data
 zfs mount ${LOCAL_POOL}/${RESTORE_DATASET}
+check_command "Failed to mount restored dataset"
 ls /${LOCAL_POOL}/${RESTORE_DATASET}
 
 echo "Snapshot restored to ${LOCAL_POOL}/${RESTORE_DATASET} successfully."
@@ -196,11 +231,22 @@ BACKUP_DATASET="dataset"
 REMOTE_USER="user"
 REMOTE_SERVER="backupserver"
 
+# Function to check the exit status of the last executed command
+check_command() {
+    if [ $? -ne 0 ]; then
+        echo "Error: $1"
+        exit 1
+    fi
+}
+
 # Run scrub on source and backup pools
 echo "Running scrub on source dataset..."
 zfs scrub ${SOURCE_POOL}/${SOURCE_DATASET}
+check_command "Failed to run scrub on source dataset"
+
 echo "Running scrub on backup dataset..."
 ssh ${REMOTE_USER}@${REMOTE_SERVER} zfs scrub ${BACKUP_POOL}/${BACKUP_DATASET}
+check_command "Failed to run scrub on backup dataset"
 
 # Wait for scrub to complete
 echo "Waiting for scrub to complete..."
@@ -216,12 +262,18 @@ echo "Backup Pool Status: ${BACKUP_STATUS}"
 # List snapshots
 echo "Listing snapshots on source dataset..."
 zfs list -t snapshot -r ${SOURCE_POOL}/${SOURCE_DATASET}
+check_command "Failed to list snapshots on source dataset"
+
 echo "Listing snapshots on backup dataset..."
 ssh ${REMOTE_USER}@${REMOTE_SERVER} zfs list -t snapshot -r ${BACKUP_POOL}/${BACKUP_DATASET}
+check_command "Failed to list snapshots on backup dataset"
 
 # Compare datasets using rsync
 echo "Comparing source and backup datasets using rsync..."
 rsync -avnc /${SOURCE_POOL}/${SOURCE_DATASET}/ ${REMOTE_USER}@${REMOTE_SERVER}:/${BACKUP_POOL}/${BACKUP_DATASET}/
+check
+
+_command "Failed to compare datasets using rsync"
 
 echo "Backup validation completed successfully."
 ```
@@ -235,8 +287,17 @@ This script sets up a cron job to regularly perform validation.
 # Path to validation script
 VALIDATION_SCRIPT_PATH="/path/to/validate_backups.sh"
 
+# Function to check the exit status of the last executed command
+check_command() {
+    if [ $? -ne 0 ]; then
+        echo "Error: $1"
+        exit 1
+    fi
+}
+
 # Add cron job to run validation script every Sunday at 2 AM
 (crontab -l ; echo "0 2 * * 0 ${VALIDATION_SCRIPT_PATH}") | crontab -
+check_command "Failed to schedule validation script"
 
 echo "Scheduled validation script to run every Sunday at 2 AM."
 ```
