@@ -1,7 +1,7 @@
 # ghostbsd-znapzend-backup
 Scripts and SOP for ZFS backups using znapzend on GhostBSD
 
-# SOP for Remote Backup and Restore using `znapzend` on GhostBSD
+## SOP for Remote Backup and Restore using `znapzend` on GhostBSD
 **Anonymous-Cupholder**  
 *Copyright 2024*
 
